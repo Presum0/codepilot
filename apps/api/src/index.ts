@@ -111,6 +111,52 @@ app.get("/repositories/tree", async (request, reply) => {
   }
 });
 
+app.get("/repositories/file", async (request, reply) => {
+  try {
+    const { owner, repo, path, branch } = request.query as { owner?: string, repo?: string, path?: string, branch?: string };
+
+    if (!owner || !repo || !path || !branch) {
+      return reply.code(400).send({ error: "Missing required query parameters: owner, repo, path, branch" });
+    }
+
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`, {
+      headers: {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "CodePilot-API"
+      }
+    });
+
+    if (response.status === 404) {
+      return reply.code(404).send({ error: "File not found" });
+    }
+
+    if (!response.ok) {
+      return reply.code(response.status).send({ error: "GitHub API error fetching file" });
+    }
+
+    const data = await response.json();
+
+    if (Array.isArray(data) || data.type !== "file") {
+      return reply.code(400).send({ error: "Requested path is a directory, not a file" });
+    }
+
+    if (!data.content && data.content !== "") {
+      return reply.code(400).send({ error: "File content missing or file is too large" });
+    }
+
+    const decodedContent = Buffer.from(data.content, "base64").toString("utf-8");
+
+    return {
+      path: data.path,
+      content: decodedContent,
+      encoding: "utf-8"
+    };
+  } catch (error) {
+    app.log.error(error);
+    return reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
 const start = async () => {
   try {
     await app.listen({ port: 3000 });
