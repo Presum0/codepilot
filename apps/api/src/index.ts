@@ -1,5 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import { fetchRepositoryMetadata, fetchRepositoryTree, fetchFileContents } from "./github/api";
+import { query } from "./db/index";
 
 const app = Fastify({
   logger: true,
@@ -39,24 +41,17 @@ app.post("/repositories", async (request, reply) => {
     const owner = pathParts[0];
     const repo = pathParts[1].replace(/\.git$/, "");
 
-    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-      headers: {
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "CodePilot-API"
+    let data;
+    try {
+      data = await fetchRepositoryMetadata(owner, repo);
+    } catch (err: any) {
+      if (err.message.includes("404")) {
+        return reply.code(404).send({ error: "Repository not found or is private" });
       }
-    });
-
-    if (response.status === 404) {
-      return reply.code(404).send({ error: "Repository not found or is private" });
+      return reply.code(500).send({ error: "GitHub API error fetching metadata" });
     }
 
-    if (!response.ok) {
-      return reply.code(response.status).send({ error: "GitHub API error" });
-    }
-
-    const data = await response.json();
-
-    return {
+    const resultData = {
       name: data.name,
       owner: data.owner.login,
       description: data.description,
@@ -64,6 +59,24 @@ app.post("/repositories", async (request, reply) => {
       defaultBranch: data.default_branch,
       stars: data.stargazers_count
     };
+
+    // Persist to database
+    try {
+      await query(
+        `INSERT INTO repositories (github_url, owner, name, description, default_branch, stars)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (github_url) DO UPDATE SET
+           description = EXCLUDED.description,
+           default_branch = EXCLUDED.default_branch,
+           stars = EXCLUDED.stars`,
+        [resultData.url, resultData.owner, resultData.name, resultData.description, resultData.defaultBranch, resultData.stars]
+      );
+    } catch (dbErr) {
+      app.log.error(dbErr);
+      return reply.code(500).send({ error: "Failed to persist repository to database" });
+    }
+
+    return resultData;
   } catch (error) {
     app.log.error(error);
     return reply.code(500).send({ error: "Internal server error" });
@@ -78,32 +91,56 @@ app.get("/repositories/tree", async (request, reply) => {
       return reply.code(400).send({ error: "Missing required query parameters: owner, repo, branch" });
     }
 
-    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, {
-      headers: {
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "CodePilot-API"
+    let data;
+    try {
+      data = await fetchRepositoryTree(owner, repo, branch);
+    } catch (err: any) {
+      if (err.message.includes("404")) {
+        return reply.code(404).send({ error: "Repository tree not found" });
       }
-    });
-
-    if (response.status === 404) {
-      return reply.code(404).send({ error: "Repository tree not found" });
+      return reply.code(500).send({ error: "GitHub API error fetching tree" });
     }
 
-    if (!response.ok) {
-      return reply.code(response.status).send({ error: "GitHub API error" });
-    }
+    const treeArray = data.tree.map((item: any) => ({
+      path: item.path,
+      type: item.type
+    }));
 
-    const data = await response.json();
+    // Persist to database
+    try {
+      const repoResult = await query(
+        `SELECT id FROM repositories WHERE owner = $1 AND name = $2`,
+        [owner, repo]
+      );
+
+      if (repoResult.rows.length > 0) {
+        const repoId = repoResult.rows[0].id;
+        
+        // Delete old files
+        await query(`DELETE FROM repository_files WHERE repository_id = $1`, [repoId]);
+        
+        // Insert new files
+        if (treeArray.length > 0) {
+           const paths = treeArray.map((i: any) => i.path);
+           const types = treeArray.map((i: any) => i.type);
+           await query(
+             `INSERT INTO repository_files (repository_id, path, type)
+              SELECT $1, unnest($2::text[]), unnest($3::text[])`,
+             [repoId, paths, types]
+           );
+        }
+      }
+    } catch (dbErr) {
+      app.log.error(dbErr);
+      return reply.code(500).send({ error: "Failed to persist repository tree to database" });
+    }
 
     return {
       owner,
       repository: repo,
       branch,
       truncated: data.truncated,
-      tree: data.tree.map((item: any) => ({
-        path: item.path,
-        type: item.type
-      }))
+      tree: treeArray
     };
   } catch (error) {
     app.log.error(error);
@@ -119,22 +156,15 @@ app.get("/repositories/file", async (request, reply) => {
       return reply.code(400).send({ error: "Missing required query parameters: owner, repo, path, branch" });
     }
 
-    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`, {
-      headers: {
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "CodePilot-API"
+    let data;
+    try {
+      data = await fetchFileContents(owner, repo, path, branch);
+    } catch (err: any) {
+      if (err.message.includes("404")) {
+        return reply.code(404).send({ error: "File not found" });
       }
-    });
-
-    if (response.status === 404) {
-      return reply.code(404).send({ error: "File not found" });
+      return reply.code(500).send({ error: "GitHub API error fetching file" });
     }
-
-    if (!response.ok) {
-      return reply.code(response.status).send({ error: "GitHub API error fetching file" });
-    }
-
-    const data = await response.json();
 
     if (Array.isArray(data) || data.type !== "file") {
       return reply.code(400).send({ error: "Requested path is a directory, not a file" });
