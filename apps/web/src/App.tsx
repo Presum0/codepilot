@@ -19,6 +19,13 @@ type FileData = {
   content: string;
 };
 
+type IngestStats = {
+  filesProcessed: number;
+  filesStored: number;
+  filesSkipped: number;
+  filesFailed: number;
+};
+
 function App() {
   const [backendStatus, setBackendStatus] = useState("Checking...");
   const [url, setUrl] = useState("");
@@ -33,6 +40,10 @@ function App() {
   const [selectedFile, setSelectedFile] = useState<FileData | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+
+  const [ingestLoading, setIngestLoading] = useState(false);
+  const [ingestStats, setIngestStats] = useState<IngestStats | null>(null);
+  const [ingestError, setIngestError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("http://localhost:3000/health")
@@ -55,6 +66,8 @@ function App() {
     setTreeError(null);
     setSelectedFile(null);
     setFileError(null);
+    setIngestStats(null);
+    setIngestError(null);
 
     try {
       const response = await fetch("http://localhost:3000/repositories", {
@@ -99,7 +112,7 @@ function App() {
 
   const handleFileClick = async (path: string) => {
     if (!repoData) return;
-
+    
     setSelectedFile(null);
     setFileError(null);
     setFileLoading(true);
@@ -119,6 +132,40 @@ function App() {
       setFileError(err.message || "An unexpected error occurred while fetching the file");
     } finally {
       setFileLoading(false);
+    }
+  };
+
+  const handleIngest = async () => {
+    if (!repoData) return;
+
+    setIngestLoading(true);
+    setIngestError(null);
+    setIngestStats(null);
+
+    try {
+      const response = await fetch("http://localhost:3000/repositories/ingest", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          owner: repoData.owner,
+          repo: repoData.name,
+          branch: repoData.defaultBranch
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to ingest repository");
+      }
+
+      setIngestStats(data);
+    } catch (err: any) {
+      setIngestError(err.message || "An unexpected error occurred during ingestion");
+    } finally {
+      setIngestLoading(false);
     }
   };
 
@@ -164,6 +211,38 @@ function App() {
             <p><strong>URL:</strong> <a href={repoData.url} target="_blank" rel="noreferrer">{repoData.url}</a></p>
             <p><strong>Default Branch:</strong> {repoData.defaultBranch}</p>
             <p><strong>Stars:</strong> {repoData.stars}</p>
+            
+            <div style={{ marginTop: "1.5rem", padding: "1rem", borderTop: "1px solid #ddd" }}>
+              <h4>Source File Ingestion</h4>
+              <p style={{ fontSize: "14px", color: "#666" }}>
+                Download all relevant source files from this repository to PostgreSQL.
+              </p>
+              <button
+                onClick={handleIngest}
+                disabled={ingestLoading}
+                style={{ marginTop: "10px", padding: "8px 16px", borderRadius: "4px", background: "#28a745", color: "white", border: "none", cursor: ingestLoading ? "not-allowed" : "pointer", opacity: ingestLoading ? 0.7 : 1 }}
+              >
+                {ingestLoading ? "Ingesting..." : "Ingest Repository"}
+              </button>
+
+              {ingestError && (
+                <div style={{ marginTop: "10px", padding: "10px", backgroundColor: "#ffebee", color: "#c62828", borderRadius: "4px" }}>
+                  {ingestError}
+                </div>
+              )}
+
+              {ingestStats && (
+                <div style={{ marginTop: "10px", padding: "10px", backgroundColor: "#e8f5e9", color: "#2e7d32", borderRadius: "4px" }}>
+                  <strong>Ingestion Complete</strong>
+                  <ul style={{ margin: "5px 0 0", paddingLeft: "20px" }}>
+                    <li>{ingestStats.filesProcessed} files processed</li>
+                    <li>{ingestStats.filesStored} files stored</li>
+                    <li>{ingestStats.filesSkipped} files skipped</li>
+                    <li>{ingestStats.filesFailed} files failed</li>
+                  </ul>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -183,10 +262,10 @@ function App() {
                 {treeData.map((item, index) => {
                   const isFile = item.type === "blob";
                   return (
-                    <div
-                      key={index}
-                      style={{
-                        marginBottom: "4px",
+                    <div 
+                      key={index} 
+                      style={{ 
+                        marginBottom: "4px", 
                         paddingLeft: `${(item.path.split("/").length - 1) * 15}px`,
                         cursor: isFile ? "pointer" : "default",
                         color: isFile ? "#0066cc" : "inherit",
@@ -209,9 +288,9 @@ function App() {
         {(fileLoading || fileError || selectedFile) && (
           <div style={{ flex: 2, padding: "1.5rem", border: "1px solid #ccc", borderRadius: "8px", overflow: "hidden", display: "flex", flexDirection: "column" }}>
             <h2>File Viewer</h2>
-
+            
             {fileLoading && <p>Loading file contents...</p>}
-
+            
             {fileError && (
               <div style={{ padding: "10px", backgroundColor: "#ffebee", color: "#c62828", borderRadius: "4px" }}>
                 {fileError}

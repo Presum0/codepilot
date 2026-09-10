@@ -19,3 +19,9 @@ CREATE TABLE IF NOT EXISTS repository_files (
 );
 
 CREATE INDEX IF NOT EXISTS idx_repository_files_repository_id ON repository_files(repository_id);
+
+ALTER TABLE repository_files ADD COLUMN IF NOT EXISTS language VARCHAR(50);
+ALTER TABLE repository_files ADD COLUMN IF NOT EXISTS size INTEGER;
+ALTER TABLE repository_files ADD COLUMN IF NOT EXISTS content TEXT;
+ALTER TABLE repository_files ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
+ALTER TABLE repository_files ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;

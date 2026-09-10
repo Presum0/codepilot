@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { fetchRepositoryMetadata, fetchRepositoryTree, fetchFileContents } from "./github/api";
 import { query } from "./db/index";
+import { ingestRepository } from "./services/ingestion/index";
 
 const app = Fastify({
   logger: true,
@@ -184,6 +185,33 @@ app.get("/repositories/file", async (request, reply) => {
   } catch (error) {
     app.log.error(error);
     return reply.code(500).send({ error: "Internal server error" });
+  }
+});
+
+app.post("/repositories/ingest", async (request, reply) => {
+  try {
+    const { owner, repo, branch } = request.body as { owner?: string, repo?: string, branch?: string };
+
+    if (!owner || !repo || !branch) {
+      return reply.code(400).send({ error: "Missing required fields: owner, repo, branch" });
+    }
+
+    const repoResult = await query(
+      `SELECT id FROM repositories WHERE owner = $1 AND name = $2`,
+      [owner, repo]
+    );
+
+    if (repoResult.rows.length === 0) {
+      return reply.code(404).send({ error: "Repository not found in database. Connect it first." });
+    }
+
+    const repoId = repoResult.rows[0].id;
+    const result = await ingestRepository(owner, repo, branch, repoId);
+
+    return result;
+  } catch (error) {
+    app.log.error(error);
+    return reply.code(500).send({ error: "Internal server error during ingestion" });
   }
 });
 
