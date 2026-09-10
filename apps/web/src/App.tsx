@@ -26,6 +26,12 @@ type IngestStats = {
   filesFailed: number;
 };
 
+type ChunkStats = {
+  filesProcessed: number;
+  filesSkipped: number;
+  chunksCreated: number;
+};
+
 function App() {
   const [backendStatus, setBackendStatus] = useState("Checking...");
   const [url, setUrl] = useState("");
@@ -44,6 +50,10 @@ function App() {
   const [ingestLoading, setIngestLoading] = useState(false);
   const [ingestStats, setIngestStats] = useState<IngestStats | null>(null);
   const [ingestError, setIngestError] = useState<string | null>(null);
+
+  const [chunkLoading, setChunkLoading] = useState(false);
+  const [chunkStats, setChunkStats] = useState<ChunkStats | null>(null);
+  const [chunkError, setChunkError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("http://localhost:3000/health")
@@ -169,6 +179,34 @@ function App() {
     }
   };
 
+  const handleChunk = async () => {
+    if (!repoData) return;
+
+    setChunkLoading(true);
+    setChunkError(null);
+    setChunkStats(null);
+
+    try {
+      const response = await fetch("http://localhost:3000/repositories/chunk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: repoData.owner, repo: repoData.name }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to chunk repository");
+      }
+
+      setChunkStats(data);
+    } catch (err: any) {
+      setChunkError(err.message || "An unexpected error occurred during chunking");
+    } finally {
+      setChunkLoading(false);
+    }
+  };
+
   return (
     <div style={{ maxWidth: "1000px", margin: "0 auto", padding: "2rem", fontFamily: "sans-serif" }}>
       <h1>CodePilot</h1>
@@ -239,6 +277,37 @@ function App() {
                     <li>{ingestStats.filesStored} files stored</li>
                     <li>{ingestStats.filesSkipped} files skipped</li>
                     <li>{ingestStats.filesFailed} files failed</li>
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: "1rem", padding: "1rem", borderTop: "1px solid #ddd" }}>
+              <h4>Code Chunking</h4>
+              <p style={{ fontSize: "14px", color: "#666" }}>
+                Split stored source files into chunks for future retrieval.
+              </p>
+              <button
+                onClick={handleChunk}
+                disabled={chunkLoading}
+                style={{ marginTop: "10px", padding: "8px 16px", borderRadius: "4px", background: "#6f42c1", color: "white", border: "none", cursor: chunkLoading ? "not-allowed" : "pointer", opacity: chunkLoading ? 0.7 : 1 }}
+              >
+                {chunkLoading ? "Chunking..." : "Chunk Code"}
+              </button>
+
+              {chunkError && (
+                <div style={{ marginTop: "10px", padding: "10px", backgroundColor: "#ffebee", color: "#c62828", borderRadius: "4px" }}>
+                  {chunkError}
+                </div>
+              )}
+
+              {chunkStats && (
+                <div style={{ marginTop: "10px", padding: "10px", backgroundColor: "#ede7f6", color: "#4527a0", borderRadius: "4px" }}>
+                  <strong>Chunking Complete</strong>
+                  <ul style={{ margin: "5px 0 0", paddingLeft: "20px" }}>
+                    <li>{chunkStats.filesProcessed} files processed</li>
+                    <li>{chunkStats.filesSkipped} files skipped</li>
+                    <li>{chunkStats.chunksCreated} chunks created</li>
                   </ul>
                 </div>
               )}

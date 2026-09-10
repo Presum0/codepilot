@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import { fetchRepositoryMetadata, fetchRepositoryTree, fetchFileContents } from "./github/api";
 import { query } from "./db/index";
 import { ingestRepository } from "./services/ingestion/index";
+import { chunkRepository } from "./services/chunking/index";
 
 const app = Fastify({
   logger: true,
@@ -212,6 +213,33 @@ app.post("/repositories/ingest", async (request, reply) => {
   } catch (error) {
     app.log.error(error);
     return reply.code(500).send({ error: "Internal server error during ingestion" });
+  }
+});
+
+app.post("/repositories/chunk", async (request, reply) => {
+  try {
+    const { owner, repo } = request.body as { owner?: string, repo?: string };
+
+    if (!owner || !repo) {
+      return reply.code(400).send({ error: "Missing required fields: owner, repo" });
+    }
+
+    const repoResult = await query(
+      `SELECT id FROM repositories WHERE owner = $1 AND name = $2`,
+      [owner, repo]
+    );
+
+    if (repoResult.rows.length === 0) {
+      return reply.code(404).send({ error: "Repository not found. Connect and ingest it first." });
+    }
+
+    const repoId = repoResult.rows[0].id;
+    const result = await chunkRepository(repoId);
+
+    return result;
+  } catch (error) {
+    app.log.error(error);
+    return reply.code(500).send({ error: "Internal server error during chunking" });
   }
 });
 

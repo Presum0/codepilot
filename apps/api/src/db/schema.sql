@@ -25,3 +25,17 @@ ALTER TABLE repository_files ADD COLUMN IF NOT EXISTS size INTEGER;
 ALTER TABLE repository_files ADD COLUMN IF NOT EXISTS content TEXT;
 ALTER TABLE repository_files ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
 ALTER TABLE repository_files ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+
+CREATE TABLE IF NOT EXISTS code_chunks (
+  id SERIAL PRIMARY KEY,
+  repository_file_id INTEGER NOT NULL REFERENCES repository_files(id) ON DELETE CASCADE,
+  chunk_index INTEGER NOT NULL,
+  start_line INTEGER NOT NULL,
+  end_line INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(repository_file_id, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_code_chunks_repository_file_id ON code_chunks(repository_file_id);
+
